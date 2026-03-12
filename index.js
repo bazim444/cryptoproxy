@@ -4,6 +4,19 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
+
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Crypto Proxy API is running!',
+    routes: [
+      '/api/gold',
+      '/api/equity/:symbol',
+      '/api/save-number',
+      '/api/numbers'
+    ]
+  });
+});
 // Save phone number to text file
 app.post('/api/save-number', (req, res) => {
   try {
