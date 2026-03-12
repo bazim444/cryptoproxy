@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -10,7 +9,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Absolute path for numbers.txt
 const filePath = path.join(__dirname, 'numbers.txt');
 
 // ----------------------
@@ -24,41 +22,35 @@ app.get('/', (req, res) => {
       '/api/equity/:symbol',
       '/api/save-number',
       '/api/numbers',
-	  '/api/download-numbers'
+      '/api/download-numbers'
     ]
   });
 });
 
 // ----------------------
-// Save phone number
+// Save phone number (append line by line, prevent duplicates)
 // ----------------------
-app.post('/api/save-number', async (req, res) => {
+app.post('/api/save-number', (req, res) => {
   try {
     const phone = req.body?.phone;
     const ip = req.ip || req.headers['x-forwarded-for'] || 'Unknown';
 
     if (!phone) return res.status(400).json({ error: 'Phone number is required' });
 
-    // Read existing numbers
     let existingNumbers = [];
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf8');
       existingNumbers = data.split('\n').map(line => line.split(' - ')[0]);
     }
 
-    // Prevent duplicates
     if (existingNumbers.includes(phone)) {
       return res.status(409).json({ error: 'Phone number already saved' });
     }
 
     const line = `${phone} - ${new Date().toLocaleString()} - ${ip}\n`;
 
-    // Append asynchronously
     fs.appendFile(filePath, line, (err) => {
-      if (err) {
-        console.error('Error writing file:', err);
-        return res.status(500).json({ error: 'Failed to save number' });
-      }
+      if (err) return res.status(500).json({ error: 'Failed to save number' });
       res.json({ success: true, message: 'Number saved!' });
     });
 
@@ -73,32 +65,22 @@ app.post('/api/save-number', async (req, res) => {
 app.get('/api/numbers', (req, res) => {
   try {
     if (!fs.existsSync(filePath)) return res.json({ numbers: [] });
-
     const data = fs.readFileSync(filePath, 'utf8');
-    const numbers = data.split('\n').filter(Boolean); // remove empty lines
-
+    const numbers = data.split('\n').filter(Boolean);
     res.json({ numbers });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ----------------------
 // Download numbers.txt
-app.post('/api/save-number', (req, res) => {
-  try {
-    const phone = req.body?.phone;
-    const ip = req.ip || 'Unknown';
-
-    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
-
-    const line = `${phone} - ${new Date().toLocaleString()} - ${ip}\n`;
-
-    fs.appendFile(filePath, line, (err) => {
-      if (err) return res.status(500).json({ error: 'Failed to save number' });
-      res.json({ success: true, message: 'Number saved!' });
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// ----------------------
+app.get('/api/download-numbers', (req, res) => {
+  if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
+  res.download(filePath, 'numbers.txt', (err) => {
+    if (err) console.error('Error downloading file:', err);
+  });
 });
 
 // ----------------------
