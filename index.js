@@ -37,16 +37,6 @@ app.post('/api/save-number', (req, res) => {
 
     if (!phone) return res.status(400).json({ error: 'Phone number is required' });
 
-    let existingNumbers = [];
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf8');
-      existingNumbers = data.split('\n').map(line => line.split(' - ')[0]);
-    }
-
-    if (existingNumbers.includes(phone)) {
-      return res.status(409).json({ error: 'Phone number already saved' });
-    }
-
     const line = `${phone} - ${new Date().toLocaleString()} - ${ip}\n`;
 
     fs.appendFile(filePath, line, (err) => {
