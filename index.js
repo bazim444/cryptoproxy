@@ -23,7 +23,8 @@ app.get('/', (req, res) => {
       '/api/gold',
       '/api/equity/:symbol',
       '/api/save-number',
-      '/api/numbers'
+      '/api/numbers',
+	  '/api/download-numbers'
     ]
   });
 });
@@ -82,16 +83,22 @@ app.get('/api/numbers', (req, res) => {
   }
 });
 // Download numbers.txt
-app.get('/api/download-numbers', (req, res) => {
-  const filePath = path.join(__dirname, 'numbers.txt');
+app.post('/api/save-number', (req, res) => {
+  try {
+    const phone = req.body?.phone;
+    const ip = req.ip || 'Unknown';
 
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).send('File not found');
+    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
+
+    const line = `${phone} - ${new Date().toLocaleString()} - ${ip}\n`;
+
+    fs.appendFile(filePath, line, (err) => {
+      if (err) return res.status(500).json({ error: 'Failed to save number' });
+      res.json({ success: true, message: 'Number saved!' });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.download(filePath, 'numbers.txt', (err) => {
-    if (err) console.error(err);
-  });
 });
 
 // ----------------------
