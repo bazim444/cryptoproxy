@@ -81,6 +81,18 @@ app.get('/api/numbers', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// Download numbers.txt
+app.get('/api/download-numbers', (req, res) => {
+  const filePath = path.join(__dirname, 'numbers.txt');
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('File not found');
+  }
+
+  res.download(filePath, 'numbers.txt', (err) => {
+    if (err) console.error(err);
+  });
+});
 
 // ----------------------
 // Get Gold price
