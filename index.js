@@ -3,6 +3,8 @@ const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
@@ -10,6 +12,27 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const filePath = path.join(__dirname, 'numbers.txt');
+
+// ----------------------
+// Connect MongoDB
+// ----------------------
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.log('❌ MongoDB Error:', err));
+
+// ----------------------
+// MongoDB Schema
+// ----------------------
+const LeadSchema = new mongoose.Schema({
+  phone: String,
+  telegram: { type: String, default: 'N/A' },
+  name: { type: String, default: 'N/A' },
+  telegramId: { type: String, default: 'N/A' },
+  ip: { type: String, default: 'Unknown' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Lead = mongoose.model('Lead', LeadSchema);
 
 // ----------------------
 // Home route
@@ -22,35 +45,63 @@ app.get('/', (req, res) => {
       '/api/equity/:symbol',
       '/api/save-number',
       '/api/numbers',
-      '/api/download-numbers'
+      '/api/download-numbers',
+      '/api/leads'
     ]
   });
 });
 
 // ----------------------
-// Save phone number (append line by line, prevent duplicates)
+// Save phone number to FILE + MongoDB
 // ----------------------
-app.post('/api/save-number', (req, res) => {
+app.post('/api/save-number', async (req, res) => {
   try {
     const phone = req.body?.phone;
+    const telegram = req.body?.telegram ?? 'N/A';
+    const name = req.body?.name ?? 'N/A';
+    const telegramId = req.body?.telegramId ?? 'N/A';
     const ip = req.ip || req.headers['x-forwarded-for'] || 'Unknown';
 
-    if (!phone) return res.status(400).json({ error: 'Phone number is required' });
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
 
-    const line = `${phone} - ${new Date().toLocaleString()} - ${ip}\n`;
-
+    // Save to text file
+    const line = `Phone: ${phone} | Name: ${name} | Telegram: ${telegram} | IP: ${ip} | ${new Date().toLocaleString()}\n`;
     fs.appendFile(filePath, line, (err) => {
-      if (err) return res.status(500).json({ error: 'Failed to save number' });
-      res.json({ success: true, message: 'Number saved!' });
+      if (err) console.error('File save error:', err);
     });
 
+    // Save to MongoDB
+    const lead = new Lead({
+      phone,
+      telegram,
+      name,
+      telegramId,
+      ip
+    });
+    await lead.save();
+
+    res.json({ success: true, message: 'Lead saved!' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ----------------------
-// Get saved numbers
+// Get all leads from MongoDB
+// ----------------------
+app.get('/api/leads', async (req, res) => {
+  try {
+    const leads = await Lead.find().sort({ createdAt: -1 });
+    res.json(leads);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------
+// Get saved numbers from file
 // ----------------------
 app.get('/api/numbers', (req, res) => {
   try {
@@ -78,7 +129,9 @@ app.get('/api/download-numbers', (req, res) => {
 // ----------------------
 app.get('/api/gold', async (req, res) => {
   try {
-    const response = await axios.get('https://query1.finance.yahoo.com/v8/finance/chart/GC=F');
+    const response = await axios.get(
+      'https://query1.finance.yahoo.com/v8/finance/chart/GC=F'
+    );
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -91,7 +144,9 @@ app.get('/api/gold', async (req, res) => {
 app.get('/api/equity/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
-    const response = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
+    );
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
