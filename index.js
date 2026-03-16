@@ -339,23 +339,36 @@ app.get('/api/download-numbers', (req, res) => {
 
 // ----------------------
 // Gold price
-// ----------------------
 app.get('/api/gold', async (req, res) => {
   try {
-    const response = await axios.get('https://query1.finance.yahoo.com/v8/finance/chart/GC=F');
+    const response = await axios.get(
+      'https://query1.finance.yahoo.com/v8/finance/chart/GC=F',
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+        }
+      }
+    );
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ----------------------
-// Equity by symbol
-// ----------------------
+// Same fix for equity
 app.get('/api/equity/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
-    const response = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+        }
+      }
+    );
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
