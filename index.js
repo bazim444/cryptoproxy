@@ -35,6 +35,102 @@ const LeadSchema = new mongoose.Schema({
 const Lead = mongoose.model('Lead', LeadSchema);
 
 // ----------------------
+// Telegram Bot Config
+// ----------------------
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+
+// Send message to one user
+const sendTelegramMessage = async (telegramId, message) => {
+  try {
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: telegramId,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+    console.log(`✅ Sent to ${telegramId}`);
+  } catch (err) {
+    console.error(`❌ Failed to send to ${telegramId}:`, err.message);
+  }
+};
+
+// Send signal to ALL users in MongoDB
+const sendSignalToAll = async (message) => {
+  try {
+    const leads = await Lead.find({ telegramId: { $ne: 'N/A' } });
+    console.log(`📢 Sending to ${leads.length} users...`);
+    for (const lead of leads) {
+      await sendTelegramMessage(lead.telegramId, message);
+    }
+    console.log('✅ All signals sent!');
+  } catch (err) {
+    console.error('❌ Broadcast error:', err.message);
+  }
+};
+
+// ----------------------
+// Fetch Market Data + Build Signal
+// ----------------------
+const fetchAndSendSignal = async () => {
+  try {
+    // Fetch BTC price
+    const cryptoRes = await axios.get(
+      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple&vs_currencies=usd'
+    );
+    const crypto = cryptoRes.data;
+
+    // Fetch Gold
+    const goldRes = await axios.get(
+      'https://query1.finance.yahoo.com/v8/finance/chart/GC=F'
+    );
+    const goldUSD = goldRes.data.chart.result[0].meta.regularMarketPrice;
+    const goldAED = (goldUSD * 3.67).toFixed(2);
+
+    // Fetch Forex
+    const forexRes = await axios.get('https://open.er-api.com/v6/latest/USD');
+    const rates = forexRes.data.rates;
+    const aedToInr = (rates.INR / rates.AED).toFixed(4);
+
+    // Build signal message
+    const message = `
+📊 *Hourly Market Signal*
+🕐 ${new Date().toLocaleString('en-AE', { timeZone: 'Asia/Dubai' })}
+
+🪙 *Crypto Prices (USD)*
+- Bitcoin:  $${crypto.bitcoin.usd.toLocaleString()}
+- Ethereum: $${crypto.ethereum.usd.toLocaleString()}
+- Solana:   $${crypto.solana.usd.toLocaleString()}
+- XRP:      $${crypto.ripple.usd.toLocaleString()}
+
+🥇 *Gold*
+- Per oz:   $${goldUSD.toLocaleString()} | AED ${goldAED}
+- Per gram: $${(goldUSD / 31.1).toFixed(2)} | AED ${(goldAED / 31.1).toFixed(2)}
+
+💱 *Forex (1 USD)*
+- AED: ${rates.AED.toFixed(4)}
+- EUR: ${rates.EUR.toFixed(4)}
+- GBP: ${rates.GBP.toFixed(4)}
+- INR: ${rates.INR.toFixed(4)}
+- AED/INR: ${aedToInr}
+
+_Powered by CryptoProxy_ 🚀
+    `.trim();
+
+    await sendSignalToAll(message);
+  } catch (err) {
+    console.error('❌ Signal fetch error:', err.message);
+  }
+};
+
+// ----------------------
+// Auto trigger every 1 hour
+// ----------------------
+setInterval(() => {
+  console.log('⏰ Sending hourly signal...');
+  fetchAndSendSignal();
+}, 60 * 60 * 1000); // every 1 hour
+
+// ----------------------
 // Home route
 // ----------------------
 app.get('/', (req, res) => {
@@ -46,9 +142,36 @@ app.get('/', (req, res) => {
       '/api/save-number',
       '/api/numbers',
       '/api/download-numbers',
-      '/api/leads'
+      '/api/leads',
+      '/api/send-signal (POST)',
+      '/api/test-signal (GET)'
     ]
   });
+});
+
+// ----------------------
+// Manually trigger signal (POST)
+// ----------------------
+app.post('/api/send-signal', async (req, res) => {
+  try {
+    await fetchAndSendSignal();
+    res.json({ success: true, message: 'Signal sent to all users!' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------
+// Test signal to one user (GET)
+// ----------------------
+app.get('/api/test-signal/:telegramId', async (req, res) => {
+  try {
+    const { telegramId } = req.params;
+    await sendTelegramMessage(telegramId, '✅ Test signal working!');
+    res.json({ success: true, message: `Test sent to ${telegramId}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ----------------------
@@ -66,21 +189,20 @@ app.post('/api/save-number', async (req, res) => {
       return res.status(400).json({ error: 'Phone number is required' });
     }
 
-    // Save to text file
     const line = `Phone: ${phone} | Name: ${name} | Telegram: ${telegram} | IP: ${ip} | ${new Date().toLocaleString()}\n`;
     fs.appendFile(filePath, line, (err) => {
       if (err) console.error('File save error:', err);
     });
 
-    // Save to MongoDB
-    const lead = new Lead({
-      phone,
-      telegram,
-      name,
-      telegramId,
-      ip
-    });
+    const lead = new Lead({ phone, telegram, name, telegramId, ip });
     await lead.save();
+
+    // Send welcome message if telegramId exists
+    if (telegramId !== 'N/A') {
+      await sendTelegramMessage(telegramId,
+        `👟 *Welcome ${name}!*\n\nYou are now subscribed to hourly market signals!\n\n📊 You will receive updates every hour for:\n• Crypto prices\n• Gold prices\n• Forex rates\n\n_Stay tuned!_ 🚀`
+      );
+    }
 
     res.json({ success: true, message: 'Lead saved!' });
   } catch (err) {
