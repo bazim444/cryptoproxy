@@ -17,14 +17,18 @@ const filePath = path.join(__dirname, 'numbers.txt');
 // Connect MongoDB
 // ----------------------
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB Connected'))
+  .then(() => {
+    console.log('✅ MongoDB Connected');
+    // Start bot only after MongoDB is ready
+    startBot();
+  })
   .catch(err => console.log('❌ MongoDB Error:', err));
 
 // ----------------------
 // MongoDB Schema
 // ----------------------
 const LeadSchema = new mongoose.Schema({
-  phone: String,
+  phone: { type: String, default: 'N/A' },
   telegram: { type: String, default: 'N/A' },
   name: { type: String, default: 'N/A' },
   telegramId: { type: String, default: 'N/A' },
@@ -69,42 +73,131 @@ const sendSignalToAll = async (message) => {
 };
 
 // ----------------------
+// Telegram Bot Polling (/start handler)
+// ----------------------
+let lastUpdateId = 0;
+
+const startBot = () => {
+  console.log('🤖 Bot polling started...');
+  setInterval(async () => {
+    try {
+      const res = await axios.get(`${TELEGRAM_API}/getUpdates?offset=${lastUpdateId + 1}&timeout=5`);
+      const updates = res.data.result;
+
+      for (const update of updates) {
+        lastUpdateId = update.update_id;
+        const msg = update.message;
+        if (!msg || !msg.text) continue;
+
+        const chatId = String(msg.chat.id);
+        const text = msg.text;
+        const username = msg.from?.username ?? 'N/A';
+        const name = `${msg.from?.first_name ?? ''} ${msg.from?.last_name ?? ''}`.trim();
+
+        // Handle /start
+        if (text === '/start') {
+          try {
+            // Check if already subscribed
+            const existing = await Lead.findOne({ telegramId: chatId });
+
+            if (existing) {
+              await sendTelegramMessage(chatId,
+                `👋 Welcome back *${name}*!\n\nYou are already subscribed! 📊\n\nYou will receive hourly market signals automatically.`
+              );
+              continue;
+            }
+
+            // Save new subscriber
+            await Lead.create({
+              phone: 'N/A',
+              name,
+              telegram: `@${username}`,
+              telegramId: chatId,
+              ip: 'N/A'
+            });
+
+            console.log(`✅ New subscriber: ${name} (@${username}) ID: ${chatId}`);
+
+            // Send welcome message
+            await sendTelegramMessage(chatId,
+              `🎉 *Welcome ${name}!*\n\n` +
+              `You are now subscribed to *hourly market signals!*\n\n` +
+              `📊 Every hour you will receive:\n` +
+              `• 🪙 Crypto prices (BTC, ETH, SOL, XRP)\n` +
+              `• 🥇 Gold prices (USD & AED)\n` +
+              `• 💱 Forex rates (AED/INR)\n\n` +
+              `_First signal coming soon!_ 🚀`
+            );
+
+          } catch (err) {
+            console.error('❌ Start handler error:', err.message);
+          }
+        }
+
+        // Handle /stop
+        if (text === '/stop') {
+          try {
+            await Lead.deleteOne({ telegramId: chatId });
+            await sendTelegramMessage(chatId,
+              `😢 You have been *unsubscribed* from market signals.\n\nSend /start anytime to resubscribe!`
+            );
+            console.log(`❌ Unsubscribed: ${name} (@${username})`);
+          } catch (err) {
+            console.error('❌ Stop handler error:', err.message);
+          }
+        }
+
+        // Handle /count (admin)
+        if (text === '/count') {
+          try {
+            const count = await Lead.countDocuments({ telegramId: { $ne: 'N/A' } });
+            await sendTelegramMessage(chatId,
+              `📊 *Total Subscribers:* ${count}`
+            );
+          } catch (err) {
+            console.error('❌ Count handler error:', err.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('❌ Polling error:', err.message);
+    }
+  }, 3000); // poll every 3 seconds
+};
+
+// ----------------------
 // Fetch Market Data + Build Signal
 // ----------------------
 const fetchAndSendSignal = async () => {
   try {
-    // Fetch BTC price
     const cryptoRes = await axios.get(
       'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple&vs_currencies=usd'
     );
     const crypto = cryptoRes.data;
 
-    // Fetch Gold
     const goldRes = await axios.get(
       'https://query1.finance.yahoo.com/v8/finance/chart/GC=F'
     );
     const goldUSD = goldRes.data.chart.result[0].meta.regularMarketPrice;
     const goldAED = (goldUSD * 3.67).toFixed(2);
 
-    // Fetch Forex
     const forexRes = await axios.get('https://open.er-api.com/v6/latest/USD');
     const rates = forexRes.data.rates;
     const aedToInr = (rates.INR / rates.AED).toFixed(4);
 
-    // Build signal message
-    const message = `
-📊 *Hourly Market Signal*
+    const message =
+`📊 *Hourly Market Signal*
 🕐 ${new Date().toLocaleString('en-AE', { timeZone: 'Asia/Dubai' })}
 
-🪙 *Crypto Prices (USD)*
-- Bitcoin:  $${crypto.bitcoin.usd.toLocaleString()}
-- Ethereum: $${crypto.ethereum.usd.toLocaleString()}
-- Solana:   $${crypto.solana.usd.toLocaleString()}
-- XRP:      $${crypto.ripple.usd.toLocaleString()}
+🪙 *Crypto (USD)*
+- BTC:  $${crypto.bitcoin.usd.toLocaleString()}
+- ETH:  $${crypto.ethereum.usd.toLocaleString()}
+- SOL:  $${crypto.solana.usd.toLocaleString()}
+- XRP:  $${crypto.ripple.usd.toLocaleString()}
 
 🥇 *Gold*
 - Per oz:   $${goldUSD.toLocaleString()} | AED ${goldAED}
-- Per gram: $${(goldUSD / 31.1).toFixed(2)} | AED ${(goldAED / 31.1).toFixed(2)}
+- Per gram: $${(goldUSD / 31.1).toFixed(2)} | AED ${(parseFloat(goldAED) / 31.1).toFixed(2)}
 
 💱 *Forex (1 USD)*
 - AED: ${rates.AED.toFixed(4)}
@@ -113,8 +206,7 @@ const fetchAndSendSignal = async () => {
 - INR: ${rates.INR.toFixed(4)}
 - AED/INR: ${aedToInr}
 
-_Powered by CryptoProxy_ 🚀
-    `.trim();
+_Powered by CryptoDash_ 🚀`;
 
     await sendSignalToAll(message);
   } catch (err) {
@@ -128,7 +220,7 @@ _Powered by CryptoProxy_ 🚀
 setInterval(() => {
   console.log('⏰ Sending hourly signal...');
   fetchAndSendSignal();
-}, 60 * 60 * 1000); // every 1 hour
+}, 60 * 60 * 1000);
 
 // ----------------------
 // Home route
@@ -144,13 +236,13 @@ app.get('/', (req, res) => {
       '/api/download-numbers',
       '/api/leads',
       '/api/send-signal (POST)',
-      '/api/test-signal (GET)'
+      '/api/test-signal/:telegramId (GET)'
     ]
   });
 });
 
 // ----------------------
-// Manually trigger signal (POST)
+// Manually trigger signal
 // ----------------------
 app.post('/api/send-signal', async (req, res) => {
   try {
@@ -162,7 +254,7 @@ app.post('/api/send-signal', async (req, res) => {
 });
 
 // ----------------------
-// Test signal to one user (GET)
+// Test signal to one user
 // ----------------------
 app.get('/api/test-signal/:telegramId', async (req, res) => {
   try {
@@ -175,7 +267,7 @@ app.get('/api/test-signal/:telegramId', async (req, res) => {
 });
 
 // ----------------------
-// Save phone number to FILE + MongoDB
+// Save number (from gift claim / manual)
 // ----------------------
 app.post('/api/save-number', async (req, res) => {
   try {
@@ -197,10 +289,9 @@ app.post('/api/save-number', async (req, res) => {
     const lead = new Lead({ phone, telegram, name, telegramId, ip });
     await lead.save();
 
-    // Send welcome message if telegramId exists
     if (telegramId !== 'N/A') {
       await sendTelegramMessage(telegramId,
-        `👟 *Welcome ${name}!*\n\nYou are now subscribed to hourly market signals!\n\n📊 You will receive updates every hour for:\n• Crypto prices\n• Gold prices\n• Forex rates\n\n_Stay tuned!_ 🚀`
+        `👟 *Welcome ${name}!*\n\nYou are now subscribed to hourly market signals! 🚀`
       );
     }
 
@@ -211,7 +302,7 @@ app.post('/api/save-number', async (req, res) => {
 });
 
 // ----------------------
-// Get all leads from MongoDB
+// Get all leads
 // ----------------------
 app.get('/api/leads', async (req, res) => {
   try {
@@ -223,7 +314,7 @@ app.get('/api/leads', async (req, res) => {
 });
 
 // ----------------------
-// Get saved numbers from file
+// Get numbers from file
 // ----------------------
 app.get('/api/numbers', (req, res) => {
   try {
@@ -247,13 +338,11 @@ app.get('/api/download-numbers', (req, res) => {
 });
 
 // ----------------------
-// Get Gold price
+// Gold price
 // ----------------------
 app.get('/api/gold', async (req, res) => {
   try {
-    const response = await axios.get(
-      'https://query1.finance.yahoo.com/v8/finance/chart/GC=F'
-    );
+    const response = await axios.get('https://query1.finance.yahoo.com/v8/finance/chart/GC=F');
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -261,14 +350,12 @@ app.get('/api/gold', async (req, res) => {
 });
 
 // ----------------------
-// Get equity by symbol
+// Equity by symbol
 // ----------------------
 app.get('/api/equity/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
-    const response = await axios.get(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
-    );
+    const response = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`);
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
