@@ -220,7 +220,7 @@ _Powered by CryptoDash_ 🚀`;
 setInterval(() => {
   console.log('⏰ Sending hourly signal...');
   fetchAndSendSignal();
-}, 60 * 60 * 1000);
+},  180 * 1000);
 
 // ----------------------
 // Home route
